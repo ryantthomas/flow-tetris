@@ -7,6 +7,7 @@ An endless, adaptive falling-blocks game built for staying in the flow state. It
 ## How it works
 - **No game over.** If you top out, the board clears and speed resets.
 - **Adaptive speed.** Speed rises while you're comfortable and eases off as the board fills. It reacts to stack height, block count, holes, and how quickly those are getting worse. The response is exponential near the top and bottom, and it returns fully to the starting speed at the top.
+- **Placement quality.** Like a chess engine, it scores every spot each piece could have gone and rates your move against the best one. Near-best moves speed you up; poor ones ease off.
 - **Your score is your flow level,** meaning the highest speed you sustain. Session peak and best ever are tracked.
 
 ## Modes (M or 1–5)

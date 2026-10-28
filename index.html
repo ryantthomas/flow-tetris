@@ -122,7 +122,37 @@ function rotate(dir) {
   }
 }
 
+// Placement quality, like a chess engine: score every spot this piece could have dropped into
+// (well-known bot weights: height, lines, holes, bumpiness) and rate yours from 0 (worst) to 1 (best).
+function placementScore(m, px, py) {
+  const g = grid.map(row => row.map(Boolean));
+  m.forEach((row, r) => row.forEach((v, c) => { if (v && py + r >= 0) g[py + r][px + c] = true; }));
+  const kept = g.filter(row => !row.every(Boolean)), cleared = H - kept.length;
+  while (kept.length < H) kept.unshift(Array(W).fill(false));
+  let total = 0, holes = 0, bump = 0, prev = 0;
+  for (let x = 0; x < W; x++) {
+    const top = kept.findIndex(row => row[x]), h = top < 0 ? 0 : H - top;
+    for (let y = Math.max(top, 0) + 1; y < H; y++) if (top >= 0 && !kept[y][x]) holes++;
+    total += h; if (x) bump += Math.abs(h - prev); prev = h;
+  }
+  return -0.51 * total + 0.76 * cleared - 0.36 * holes - 0.18 * bump;
+}
+
+function placementQuality() {
+  const mine = placementScore(cur.m, cur.x, cur.y), scores = [];
+  let m = SHAPES[cur.t];
+  for (let r = 0; r < 4; r++, m = rot(m)) for (let x = -2; x < W; x++) {
+    if (hit(m, x, -2)) continue;
+    let y = -2;
+    while (!hit(m, x, y + 1)) y++;
+    scores.push(placementScore(m, x, y));
+  }
+  const lo = Math.min(mine, ...scores), hi = Math.max(mine, ...scores);
+  return hi > lo ? (mine - lo) / (hi - lo) : 1;
+}
+
 function lock() {
+  const quality = placementQuality();
   cur.m.forEach((row, r) => row.forEach((v, c) => { if (v && cur.y + r >= 0) grid[cur.y + r][cur.x + c] = {t: cur.t, born: performance.now(), stage: landings}; }));
   landings++;
   if (cur.m.some((row, r) => row.some(v => v && cur.y + r < 0))) return topOut();
@@ -131,7 +161,7 @@ function lock() {
   grid = [...Array.from({length: n}, () => Array(W).fill(null)), ...kept];
   lines += n;
   if (zen && audio) n ? clearBowls(n) : landBowl();
-  adapt();
+  adapt(quality);
   canHold = true;
   spawn();
 }
@@ -152,18 +182,20 @@ function measure() {
 }
 
 // After every piece:
-// 1. pressure = how stressed the board is, plus how fast it's getting worse (trend).
+// 1. pressure = how stressed the board is, plus how fast it's getting worse (trend),
+//    plus how your placement compared to the best one available.
 // 2. pressure is bent exponentially so it barely moves near balance and pushes hard
 //    at the extremes: empty board -> accelerate fast, filling up fast -> brake fast.
 // 3. momentum is your built-up speed; the level you actually play at is momentum
 //    scaled by a safety factor that falls exponentially to 0 as the stack reaches
 //    the top, so at the very top you're always back at starting speed.
-function adapt() {
+function adapt(quality) {
   const {height, stress} = measure();
   trend = 0.6 * trend + 0.4 * (stress - lastStress);
   lastStress = stress;
   // Recovery counts more than worsening, so speed returns quickly once you've cleaned up.
-  const pressure = clamp((stress - 0.3) / 0.3 + trend * (trend > 0 ? 6 : 14), -1, 1);
+  // Placement quality adds on top: a near-best move speeds you up, a poor one eases off.
+  const pressure = clamp((stress - 0.3) / 0.3 + trend * (trend > 0 ? 6 : 14) + 2 * (0.7 - quality), -1, 1);
   const push = Math.sign(pressure) * (Math.exp(6 * Math.abs(pressure)) - 1) / (Math.exp(6) - 1);
   momentum = clamp(momentum - 2.5 * push, 0, MAX_LEVEL - 1);
   const safety = 1 - (Math.exp(7 * height) - 1) / (Math.exp(7) - 1);
