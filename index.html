@@ -1,0 +1,555 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Flow Tetris</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0d1117;color:#c9d1d9;font:16px system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;gap:24px;overflow:hidden;transition:color 1s}
+canvas{background:#161b22;border:2px solid #30363d;border-radius:4px;transition:all 1s}
+.side,#board{position:relative;z-index:2}
+.side{width:140px}
+h3{margin:16px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#8b949e}
+.big{font-size:28px;font-weight:600}
+#bar{height:10px;background:#30363d;border-radius:5px;overflow:hidden}
+#fill{height:100%;width:0;background:#58a6ff;transition:width .4s}
+#newbest{color:#e3b341;font-size:13px;height:18px;margin-top:4px}
+small{color:#8b949e;line-height:1.7;display:block;margin-top:16px}
+.sound{display:flex;align-items:center;gap:8px}
+#vol{flex:1;min-width:0;accent-color:#58a6ff}
+#mute{background:none;border:1px solid #30363d;color:inherit;border-radius:6px;padding:2px 6px;cursor:pointer;font:inherit;font-size:14px}
+body.zen #vol{accent-color:#e8c872}
+body.zen #mute{border-color:rgba(232,200,114,.35)}
+#fractal,#motes{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;opacity:0;transition:opacity 2s;z-index:1;border:0;background:none;border-radius:0}
+#mandala{position:fixed;pointer-events:none;opacity:0;transition:opacity 2s;z-index:1;width:min(110vh,110vw);left:50%;top:50%;transform:translate(-50%,-50%)}
+#mandala svg{width:100%;display:block;animation:turn 300s linear infinite}
+@keyframes turn{to{transform:rotate(360deg)}}
+
+body.zen{background:radial-gradient(ellipse at 50% 110%,rgba(244,166,65,.22),transparent 60%),linear-gradient(-45deg,#1a1630,#3a1a2a,#1c2340,#2e1830);background-size:100% 100%,400% 400%;animation:drift 60s ease infinite;color:#eadfc8;font-family:'Cormorant Garamond',serif;font-size:18px}
+body.m-zen #mandala{opacity:.13}
+body.m-glass #fractal{opacity:.12}
+body.m-glass #board{background:rgba(10,6,14,.85)}
+body.zen .side{text-shadow:0 0 6px #000;background:rgba(20,10,25,.55);padding:4px 16px 16px;border-radius:10px;border:1px solid rgba(232,200,114,.2)}
+body.m-zen #motes{opacity:1}
+body.zen #board{background:rgba(20,10,25,.55);border:1px solid rgba(232,200,114,.35);border-radius:10px;box-shadow:0 0 90px rgba(244,166,65,.12)}
+body.zen .side canvas{background:transparent;border-color:transparent}
+body.zen h3{color:#e8c872;font-family:'Cormorant Garamond',serif;font-size:14px;letter-spacing:.2em}
+body.zen small{color:#a8977a}
+body.zen #bar{background:rgba(232,200,114,.12)}
+body.zen #fill{background:linear-gradient(90deg,#f4a641,#e8c872)}
+body.zen #newbest{color:#f4a641}
+@keyframes drift{0%,100%{background-position:0 0,0% 50%}50%{background-position:0 0,100% 50%}}
+</style></head><body>
+<div id="mandala"></div>
+<canvas id="fractal"></canvas>
+<canvas id="motes"></canvas>
+<div class="side">
+  <h3>Flow level</h3><div class="big" id="lvl">1.0</div>
+  <div id="bar"><div id="fill"></div></div>
+  <h3>Session peak</h3><div id="peak">1.0</div>
+  <h3>Best ever</h3><div id="best">1.0</div><div id="newbest"></div>
+  <h3>Hold</h3><canvas id="hold" width="120" height="80"></canvas>
+  <h3>Sound</h3><div class="sound"><button id="mute" title="Mute (N)">🔊</button><input id="vol" type="range" min="0" max="1" step="0.05" title="Volume (− / =)"></div>
+</div>
+<canvas id="board" width="300" height="600"></canvas>
+<div class="side">
+  <h3>Next</h3><canvas id="next" width="120" height="240"></canvas>
+  <h3>Lines</h3><div id="lines">0</div>
+  <small>← → move<br>↓ soft drop<br>Space hard drop<br>↑ / X rotate<br>Z rotate back<br>C hold · P pause<br>M or 1–5 change mode<br>N mute · − / = volume</small>
+</div>
+<script>
+const W = 10, H = 20, S = 30, MAX_LEVEL = 30;
+const SHAPES = {
+  I: [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]], J: [[1,0,0],[1,1,1],[0,0,0]], L: [[0,0,1],[1,1,1],[0,0,0]],
+  O: [[1,1],[1,1]], S: [[0,1,1],[1,1,0],[0,0,0]], T: [[0,1,0],[1,1,1],[0,0,0]], Z: [[1,1,0],[0,1,1],[0,0,0]]
+};
+const CLASSIC = {I:'#39c5cf', J:'#4c7bf3', L:'#f0883e', O:'#e3b341', S:'#56d364', T:'#bc8cff', Z:'#f85149'};
+// Five sacred colors (blue, white, red, green, yellow) plus robe saffron and maroon.
+const SACRED  = {I:'#7fa7d9', J:'#ece6d8', L:'#f4a641', O:'#e8c872', S:'#8cc7a1', T:'#b5566b', Z:'#d9604c'};
+const $ = id => document.getElementById(id);
+const ctx = $('board').getContext('2d');
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} }
+};
+
+let grid = Array.from({length: H}, () => Array(W).fill(null));
+let bag = [], queue = [], cur, hold = null, canHold = true;
+let lines = 0, paused = false, zen = false, mode = 'classic', modeFlash = 0, shownLevel = 1, landings = 0;
+let dropAcc = 0, groundT = 0, resets = 0, last = 0;
+let momentum = 0, level = 1, trend = 0, lastStress = 0;
+let peak = 1, best = parseFloat(store.get('flowBest')) || 1, bestFlash = 0;
+
+// Level 1 = 1 row/sec, level 20 = 20 rows/sec, level 30 ≈ 100 rows/sec.
+const interval = () => 1000 * Math.pow(20, -(level - 1) / 19);
+const rot = m => m[0].map((_, i) => m.map(r => r[i]).reverse());
+
+function nextType() {
+  if (!bag.length) {
+    bag = Object.keys(SHAPES);
+    for (let i = bag.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [bag[i], bag[j]] = [bag[j], bag[i]]; }
+  }
+  return bag.pop();
+}
+
+function hit(m, x, y) {
+  for (let r = 0; r < m.length; r++) for (let c = 0; c < m[r].length; c++) {
+    if (!m[r][c]) continue;
+    const nx = x + c, ny = y + r;
+    if (nx < 0 || nx >= W || ny >= H || (ny >= 0 && grid[ny][nx])) return true;
+  }
+  return false;
+}
+
+function spawn(t) {
+  if (!t) { t = queue.shift(); queue.push(nextType()); }
+  cur = {t, m: SHAPES[t], x: t === 'O' ? 4 : 3, y: t === 'I' ? -1 : 0};
+  groundT = 0; resets = 0;
+  if (hit(cur.m, cur.x, cur.y)) topOut();
+}
+
+function nudgeLock() { if (resets++ < 15) groundT = 0; }
+
+function move(dx, dy) {
+  if (hit(cur.m, cur.x + dx, cur.y + dy)) return false;
+  cur.x += dx; cur.y += dy;
+  if (dx) nudgeLock();
+  return true;
+}
+
+function rotate(dir) {
+  const m = dir > 0 ? rot(cur.m) : rot(rot(rot(cur.m)));
+  for (const [dx, dy] of [[0,0],[-1,0],[1,0],[-2,0],[2,0],[0,-1]]) {
+    if (!hit(m, cur.x + dx, cur.y + dy)) { cur.m = m; cur.x += dx; cur.y += dy; nudgeLock(); return; }
+  }
+}
+
+function lock() {
+  cur.m.forEach((row, r) => row.forEach((v, c) => { if (v && cur.y + r >= 0) grid[cur.y + r][cur.x + c] = {t: cur.t, born: performance.now(), stage: landings}; }));
+  landings++;
+  if (cur.m.some((row, r) => row.some(v => v && cur.y + r < 0))) return topOut();
+  const kept = grid.filter(row => row.some(v => !v));
+  const n = H - kept.length;
+  grid = [...Array.from({length: n}, () => Array(W).fill(null)), ...kept];
+  lines += n;
+  if (zen && audio) n ? clearBowls(n) : landBowl();
+  adapt();
+  canHold = true;
+  spawn();
+}
+
+// Board stress in [0, 1]: stack height, how many blocks, and buried holes.
+function measure() {
+  let cells = 0, holes = 0;
+  for (let x = 0; x < W; x++) {
+    let covered = false;
+    for (let y = 0; y < H; y++) {
+      if (grid[y][x]) { cells++; covered = true; } else if (covered) holes++;
+    }
+  }
+  const top = grid.findIndex(row => row.some(v => v));
+  const height = top < 0 ? 0 : (H - top) / H;
+  const stress = 0.5 * height + 0.3 * Math.min(1, cells / (W * H * 0.5)) + 0.2 * Math.min(1, holes / 10);
+  return {height, stress};
+}
+
+// After every piece:
+// 1. pressure = how stressed the board is, plus how fast it's getting worse (trend).
+// 2. pressure is bent exponentially so it barely moves near balance and pushes hard
+//    at the extremes: empty board -> accelerate fast, filling up fast -> brake fast.
+// 3. momentum is your built-up speed; the level you actually play at is momentum
+//    scaled by a safety factor that falls exponentially to 0 as the stack reaches
+//    the top, so at the very top you're always back at starting speed.
+function adapt() {
+  const {height, stress} = measure();
+  trend = 0.6 * trend + 0.4 * (stress - lastStress);
+  lastStress = stress;
+  const pressure = clamp((stress - 0.3) / 0.3 + trend * 10, -1, 1);
+  const push = Math.sign(pressure) * (Math.exp(4 * Math.abs(pressure)) - 1) / (Math.exp(4) - 1);
+  momentum = clamp(momentum - 1.5 * push, 0, MAX_LEVEL - 1);
+  const safety = 1 - (Math.exp(5 * height) - 1) / (Math.exp(5) - 1);
+  level = 1 + momentum * safety;
+  peak = Math.max(peak, level);
+  if (level > best) { best = level; bestFlash = 3000; store.set('flowBest', best.toFixed(2)); }
+}
+
+// Topping out: wipe the board and start over from the base speed. No game over.
+function topOut() {
+  grid = Array.from({length: H}, () => Array(W).fill(null));
+  momentum = 0; level = 1; trend = 0; lastStress = 0;
+  canHold = true;
+  spawn();
+}
+
+function holdPiece() {
+  if (!canHold) return;
+  const t = cur.t;
+  hold ? spawn(hold) : spawn();
+  hold = t;
+  canHold = false;
+}
+
+// --- Zen sound bath: synthesized singing bowls in a reverberant room ---
+// Real bowls have inharmonic partials (~1, 2.7, 5, 8.5x the fundamental), and each
+// partial is split into two slightly detuned modes, which produces the "wah-wah" beating.
+let audio, master, reverb, drone;
+let volume = parseFloat(store.get('flowVolume') ?? '0.8'), muted = store.get('flowMuted') === '1';
+
+function setVolume(v, mute = muted) {
+  volume = clamp(v, 0, 1); muted = mute;
+  store.set('flowVolume', volume); store.set('flowMuted', muted ? '1' : '');
+  if (master) master.gain.setTargetAtTime(muted ? 0 : volume, audio.currentTime, 0.1);
+  $('vol').value = volume;
+  $('mute').textContent = muted || !volume ? '🔇' : '🔊';
+}
+const PARTIALS = [[1, 1], [2.76, 0.45], [5.4, 0.2], [8.9, 0.08]];
+
+function startAudio() {
+  if (!audio) {
+    audio = new AudioContext();
+    master = audio.createGain();
+    master.gain.value = muted ? 0 : volume;
+    master.connect(audio.createDynamicsCompressor()).connect(audio.destination);
+    const len = audio.sampleRate * 6, ir = audio.createBuffer(2, len, audio.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = ir.getChannelData(ch);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+    }
+    reverb = audio.createConvolver();
+    reverb.buffer = ir;
+    const wet = audio.createGain();
+    wet.gain.value = 0.6;
+    reverb.connect(wet).connect(master);
+  }
+  audio.resume();
+  if (drone) return;
+  // Low, beating hum like a bowl being sung with a mallet around its rim.
+  drone = audio.createGain();
+  drone.gain.value = 0;
+  drone.connect(master); drone.connect(reverb);
+  for (const f of [98, 98.6, 147, 196.4]) {
+    const o = audio.createOscillator();
+    o.frequency.value = f;
+    o.connect(drone); o.start();
+  }
+  drone.gain.linearRampToValueAtTime(0.018, audio.currentTime + 5);
+}
+
+function stopAudio() {
+  if (!drone) return;
+  drone.gain.linearRampToValueAtTime(0, audio.currentTime + 2);
+  const d = drone; drone = null;
+  setTimeout(() => d.disconnect(), 2100);
+}
+
+function bowl(f, vol, dur, when = audio.currentTime, attack = 0.03) {
+  const out = audio.createGain();
+  out.connect(master); out.connect(reverb);
+  PARTIALS.forEach(([ratio, amp], i) => {
+    const end = when + dur / (1 + i * 0.7); // higher partials die away first
+    for (const side of [-1, 1]) {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.frequency.value = f * ratio + side * (0.6 + i * 0.8);
+      g.gain.setValueAtTime(0, when);
+      g.gain.linearRampToValueAtTime(vol * amp / 2, when + attack);
+      g.gain.exponentialRampToValueAtTime(0.0001, end);
+      o.connect(g).connect(out);
+      o.start(when); o.stop(end + 0.1);
+    }
+  });
+}
+
+const SMALL_BOWLS = [392, 440, 523.3, 587.3, 659.3];
+function landBowl() { bowl(SMALL_BOWLS[Math.random() * SMALL_BOWLS.length | 0], 0.04, 5, undefined, 0.06); }
+
+function clearBowls(n) {
+  const t = audio.currentTime;
+  bowl(130.8, 0.16, 16, t);
+  [196, 261.6, 329.6].slice(0, n - 1).forEach((f, i) => bowl(f, 0.08, 12, t + 0.7 * (i + 1)));
+  if (n === 4) bowl(65.4, 0.2, 22, t + 0.2, 0.2);
+}
+
+// --- Visual modes ---
+const MODES = {
+  classic: 'Classic', zen: 'Zen Mandala', glass: 'Stained Glass', bloom: 'Bloom', evolution: 'Evolution'
+};
+const MODE_KEYS = Object.keys(MODES);
+
+function setMode(m) {
+  mode = m;
+  zen = m !== 'classic';
+  document.body.className = (zen ? 'zen ' : '') + 'm-' + m;
+  store.set('flowMode', m);
+  modeFlash = 2500;
+  zen ? startAudio() : stopAudio();
+}
+
+// Zen Mandala: a slowly turning gold mandala — lotus petals, a square palace with four gates, rings.
+function buildMandala() {
+  const g = [], C = 500;
+  const pt = (r, a) => `${(C + r * Math.cos(a)).toFixed(1)},${(C + r * Math.sin(a)).toFixed(1)}`;
+  const petals = (n, r1, r2, spread, offset = 0) => {
+    for (let i = 0; i < n; i++) {
+      const a = offset + i * 2 * Math.PI / n, w = spread * Math.PI / n;
+      g.push(`<path d="M${pt(r1, a - w)} Q${pt(r2 * 0.85, a - w)} ${pt(r2, a)} Q${pt(r2 * 0.85, a + w)} ${pt(r1, a + w)}"/>`);
+    }
+  };
+  for (const r of [490, 478, 330, 320, 150, 140, 40]) g.push(`<circle cx="${C}" cy="${C}" r="${r}"/>`);
+  petals(32, 330, 470, 0.9);
+  petals(16, 330, 440, 0.9, Math.PI / 16);
+  const s = 226, gw = 50, gd = 34;
+  g.push(`<path d="M${C-s},${C-s} H${C-gw} V${C-s-gd} H${C+gw} V${C-s} H${C+s} V${C-gw} H${C+s+gd} V${C+gw} H${C+s} V${C+s} H${C+gw} V${C+s+gd} H${C-gw} V${C+s} H${C-s} V${C+gw} H${C-s-gd} V${C-gw} H${C-s} Z"/>`);
+  g.push(`<rect x="${C-s+14}" y="${C-s+14}" width="${2*s-28}" height="${2*s-28}"/>`);
+  petals(8, 40, 140, 0.8);
+  petals(8, 150, 215, 0.7, Math.PI / 8);
+  for (let i = 0; i < 64; i++) { const [x, y] = pt(484, i * Math.PI / 32).split(','); g.push(`<circle cx="${x}" cy="${y}" r="2.5" fill="#e8c872"/>`); }
+  $('mandala').innerHTML = `<svg viewBox="0 0 1000 1000" fill="none" stroke="#e8c872" stroke-width="1.6">${g.join('')}</svg>`;
+}
+
+// Fractal modes all share one Julia-set renderer (z -> z² + c) on the GPU.
+// c sways slowly through the most intricate part of the Mandelbrot set, so the shapes keep
+// morphing. The other modes then use the rendered image as a background, as a texture seen
+// through the blocks, or (Jewels) as seven small tiles, one living fractal per piece shape.
+const fgl = $('fractal').getContext('webgl', {preserveDrawingBuffer: true});
+const GEM = 64; // offscreen tiles, at half the on-screen size
+let fractalU;
+
+function buildFractal() {
+  if (!fgl) return;
+  const fs = `precision highp float;
+    uniform vec2 res, origin, cc, center; uniform float zoom, turn, shift, folds;
+    vec3 pal(float x) { // indigo -> maroon -> saffron -> gold -> teal
+      x = fract(x) * 5.;
+      vec3 k[6]; k[0] = vec3(.11,.14,.25); k[1] = vec3(.42,.12,.23); k[2] = vec3(.96,.65,.25);
+      k[3] = vec3(.91,.78,.45); k[4] = vec3(.25,.56,.54); k[5] = k[0];
+      for (int i = 0; i < 5; i++) if (x < float(i + 1)) return mix(k[i], k[i + 1], smoothstep(0., 1., x - float(i)));
+      return k[0];
+    }
+    void main() {
+      vec2 p = (gl_FragCoord.xy - origin - .5 * res) / res.y * zoom + center;
+      float a = atan(p.y, p.x) + turn;
+      if (folds > 0.) { float s = 6.28318 / folds; a = abs(mod(a, s) - s * .5); } // kaleidoscope
+      vec2 z = length(p) * vec2(cos(a), sin(a));
+      float n = 0., trap = 10.;
+      for (int i = 0; i < 300; i++) {
+        z = vec2(z.x * z.x - z.y * z.y, 2. * z.x * z.y) + cc;
+        trap = min(trap, abs(length(z) - .5));
+        if (dot(z, z) > 256.) { n = float(i) + 1. - log(log(length(z))) / log(2.); break; }
+      }
+      gl_FragColor = vec4((n > 0. ? pal(n * .03 + shift) : pal(.3 + trap * 4. + shift) * .7) * .75, 1.);
+    }`;
+  const sh = (type, src) => { const o = fgl.createShader(type); fgl.shaderSource(o, src); fgl.compileShader(o); return o; };
+  const prog = fgl.createProgram();
+  fgl.attachShader(prog, sh(fgl.VERTEX_SHADER, 'attribute vec2 p; void main() { gl_Position = vec4(p, 0, 1); }'));
+  fgl.attachShader(prog, sh(fgl.FRAGMENT_SHADER, fs));
+  fgl.linkProgram(prog);
+  fgl.useProgram(prog);
+  fgl.bindBuffer(fgl.ARRAY_BUFFER, fgl.createBuffer());
+  fgl.bufferData(fgl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), fgl.STATIC_DRAW);
+  fgl.enableVertexAttribArray(0);
+  fgl.vertexAttribPointer(0, 2, fgl.FLOAT, false, 0, 0);
+  fractalU = n => fgl.getUniformLocation(prog, n);
+}
+
+function renderFractal(x, y, w, h, [cx, cy], zoom, turn, folds, shift, center = [0, 0]) {
+  fgl.uniform2f(fractalU('center'), ...center);
+  fgl.viewport(x, y, w, h);
+  fgl.uniform2f(fractalU('res'), w, h);
+  fgl.uniform2f(fractalU('origin'), x, y);
+  fgl.uniform2f(fractalU('cc'), cx, cy);
+  fgl.uniform1f(fractalU('zoom'), zoom);
+  fgl.uniform1f(fractalU('turn'), turn);
+  fgl.uniform1f(fractalU('folds'), folds);
+  fgl.uniform1f(fractalU('shift'), shift);
+  fgl.drawArrays(fgl.TRIANGLES, 0, 3);
+}
+
+// Evolution: each landing freezes the next step of the fractal's journey into its own small image.
+const stageCache = new Map();
+function stageImage(n) {
+  if (!stageCache.has(n)) {
+    const th = Math.PI + 1.25 * Math.sin(n * 0.35);
+    const zoom = 2.6 * Math.exp(-0.8 * (0.5 - 0.5 * Math.cos(n * 0.11)));
+    renderFractal(GEM, GEM, GEM, GEM, [0.7885 * Math.cos(th), 0.7885 * Math.sin(th)], zoom, n * 0.15, 0, n * 0.04);
+    const img = document.createElement('canvas');
+    img.width = img.height = GEM;
+    img.getContext('2d').drawImage(fgl.canvas, GEM, fgl.canvas.height - 2 * GEM, GEM, GEM, 0, 0, GEM, GEM);
+    stageCache.set(n, img);
+    if (stageCache.size > 250) { // forget stages no longer on the board
+      const onBoard = new Set(grid.flat().filter(Boolean).map(c => c.stage));
+      for (const k of stageCache.keys()) if (!onBoard.has(k) && k !== n) stageCache.delete(k);
+    }
+  }
+  return stageCache.get(n);
+}
+
+function drawFractal(t, dt) {
+  if (!fgl || mode === 'classic' || mode === 'zen') return;
+  const s = t / 1000, breath = 1 + 0.04 * Math.sin(s * 2 * Math.PI / 10); // ~6 breaths a minute
+  if (mode === 'bloom') {
+    const th = Math.PI + 1.25 * Math.sin(s * 2 * Math.PI / 180);
+    renderFractal(0, GEM, GEM, GEM, [0.7885 * Math.cos(th), 0.7885 * Math.sin(th)], 2.6 * breath, s * 0.05, 0, s * 0.01);
+    return;
+  }
+  if (mode === 'evolution') return; // its tiles are snapshots, rendered once each by stageImage
+  const theta = Math.PI + 1.25 * Math.sin(s * 2 * Math.PI / 180); // sway over 3 minutes
+  // Stained Glass dives deeper as your flow level climbs.
+  shownLevel += (level - shownLevel) * Math.min(1, dt / 2000);
+  const dive = Math.min(1, (shownLevel - 1) / 15);
+  const zoom = Math.exp(Math.log(3.2) + dive * Math.log(0.7 / 3.2)) * breath;
+  renderFractal(0, 0, fgl.canvas.width, fgl.canvas.height, [0.7885 * Math.cos(theta), 0.7885 * Math.sin(theta)],
+    zoom, s * 0.02, 0, s * 0.01);
+}
+
+const motesCtx = $('motes').getContext('2d');
+const motes = Array.from({length: 45}, () => ({x: Math.random(), y: Math.random(), r: 1 + Math.random() * 2.5, v: 0.00001 + Math.random() * 0.00003, p: Math.random() * 6.28}));
+function fitMotes() {
+  $('motes').width = innerWidth; $('motes').height = innerHeight;
+  $('fractal').width = innerWidth / 2; $('fractal').height = innerHeight / 2; // half resolution keeps it smooth and soft
+}
+addEventListener('resize', fitMotes);
+
+function drawMotes(t, dt) {
+  const c = motesCtx, w = c.canvas.width, h = c.canvas.height;
+  c.clearRect(0, 0, w, h);
+  if (mode !== 'zen') return;
+  for (const m of motes) {
+    m.y -= m.v * dt;
+    if (m.y < -0.02) { m.y = 1.02; m.x = Math.random(); }
+    const x = (m.x + Math.sin(t / 4000 + m.p) * 0.01) * w, y = m.y * h;
+    const glow = c.createRadialGradient(x, y, 0, x, y, m.r * 5);
+    glow.addColorStop(0, `rgba(255,214,150,${0.35 + 0.25 * Math.sin(t / 900 + m.p)})`);
+    glow.addColorStop(1, 'rgba(255,214,150,0)');
+    c.fillStyle = glow;
+    c.beginPath(); c.arc(x, y, m.r * 5, 0, 6.29); c.fill();
+  }
+}
+
+document.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (['arrowleft','arrowright','arrowdown','arrowup',' '].includes(k)) e.preventDefault();
+  if (zen && !paused) startAudio(); // browsers only allow sound after a key press
+  if (k === 'm') return setMode(MODE_KEYS[(MODE_KEYS.indexOf(mode) + 1) % MODE_KEYS.length]);
+  if (k >= '1' && k <= String(MODE_KEYS.length)) return setMode(MODE_KEYS[k - 1]);
+  if (k === 'n') return setVolume(volume, !muted);
+  if (k === '-' || k === '_') return setVolume(volume - 0.1, false);
+  if (k === '=' || k === '+') return setVolume(volume + 0.1, false);
+  if (k === 'p') { paused = !paused; if (audio) paused ? audio.suspend() : audio.resume(); return; }
+  if (paused) return;
+  if (k === 'arrowleft') move(-1, 0);
+  else if (k === 'arrowright') move(1, 0);
+  else if (k === 'arrowdown') move(0, 1);
+  else if (k === 'arrowup' || k === 'x') rotate(1);
+  else if (k === 'z') rotate(-1);
+  else if (k === ' ') { while (move(0, 1)); lock(); }
+  else if (k === 'c' || k === 'shift') holdPiece();
+});
+$('vol').addEventListener('input', e => setVolume(+e.target.value, false));
+$('mute').addEventListener('click', () => setVolume(volume, !muted));
+// Hand the keyboard back to the game after clicking the controls, so arrows don't nudge the slider.
+for (const id of ['vol', 'mute']) $(id).addEventListener('pointerup', e => e.target.blur());
+window.addEventListener('blur', () => { paused = true; if (audio) audio.suspend(); });
+
+// live = part of the falling piece (or its ghost); ox, oy = that piece's top-left corner;
+// cell = the landed grid cell, if this block has landed.
+function block(c, x, y, s, t, live, ox, oy, cell) {
+  if (!zen) {
+    c.fillStyle = CLASSIC[t];
+    c.fillRect(x + 1, y + 1, s - 2, s - 2);
+    return;
+  }
+  const fc = fgl && fgl.canvas;
+  c.beginPath(); c.roundRect(x + 2, y + 2, s - 4, s - 4, s / 5);
+  if ((mode === 'bloom' || mode === 'evolution') && fc && cell) {
+    // Landed tiles bloom open over 0.7s: Bloom shows one shared living fractal, Evolution the stage frozen at landing.
+    c.save(); c.clip();
+    c.fillStyle = 'rgba(12,8,18,.82)'; c.fill();
+    c.globalAlpha *= Math.min(1, (performance.now() - cell.born) / 700);
+    if (mode === 'bloom') c.drawImage(fc, 0, fc.height - 2 * GEM, GEM, GEM, x, y, s, s);
+    else c.drawImage(stageImage(cell.stage), x, y, s, s);
+    c.restore();
+    c.strokeStyle = 'rgba(232,200,114,.55)'; c.lineWidth = 1; c.stroke();
+    return;
+  }
+  if (fc && mode === 'glass') {
+    // A window onto the fractal exactly behind this spot on screen.
+    c.save(); c.clip();
+    const r = c.canvas.rect, k = fc.width / innerWidth;
+    c.drawImage(fc, (r.left + c.canvas.clientLeft + x) * k, (r.top + c.canvas.clientTop + y) * k, s * k, s * k, x, y, s, s);
+    c.globalAlpha *= 0.25; c.fillStyle = SACRED[t]; c.fill(); // a hint of the piece's own color
+    c.restore();
+  } else {
+    c.fillStyle = SACRED[t];
+    c.shadowColor = SACRED[t]; c.shadowBlur = 12;
+    c.fill();
+    c.shadowBlur = 0;
+  }
+  c.strokeStyle = 'rgba(232,200,114,.55)'; c.lineWidth = 1; c.stroke();
+}
+
+function drawPiece(c, m, ox, oy, s, t, live = false) {
+  m.forEach((row, r) => row.forEach((v, col) => { if (v) block(c, ox + col * s, oy + r * s, s, t, live, ox, oy); }));
+}
+
+function drawMini(canvas, types) {
+  const c = canvas.getContext('2d');
+  c.clearRect(0, 0, canvas.width, canvas.height);
+  types.forEach((t, i) => drawPiece(c, SHAPES[t], (canvas.width - SHAPES[t][0].length * 20) / 2, 10 + i * 80, 20, t));
+}
+
+function draw(t, dt) {
+  drawFractal(t, dt);
+  for (const id of ['board', 'next', 'hold']) $(id).rect = $(id).getBoundingClientRect();
+  ctx.clearRect(0, 0, W * S, H * S);
+  grid.forEach((row, y) => row.forEach((p, x) => { if (p) block(ctx, x * S, y * S, S, p.t, false, 0, 0, p); }));
+  let gy = cur.y;
+  while (!hit(cur.m, cur.x, gy + 1)) gy++;
+  ctx.globalAlpha = zen ? 0.15 : 0.25;
+  drawPiece(ctx, cur.m, cur.x * S, gy * S, S, cur.t, true);
+  ctx.globalAlpha = 1;
+  drawPiece(ctx, cur.m, cur.x * S, cur.y * S, S, cur.t, true);
+  modeFlash = Math.max(0, modeFlash - dt);
+  if (modeFlash) {
+    ctx.globalAlpha = Math.min(1, modeFlash / 600);
+    ctx.fillStyle = zen ? '#e8c872' : '#c9d1d9'; ctx.font = zen ? "26px 'Cormorant Garamond', serif" : '22px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(MODES[mode], W * S / 2, H * S / 3);
+    ctx.globalAlpha = 1;
+  }
+  if (paused) {
+    ctx.fillStyle = 'rgba(13,17,23,.7)'; ctx.fillRect(0, 0, W * S, H * S);
+    ctx.fillStyle = '#c9d1d9'; ctx.font = '24px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('Paused — press P', W * S / 2, H * S / 2);
+  }
+  drawMini($('next'), queue.slice(0, 3));
+  drawMini($('hold'), hold ? [hold] : []);
+  drawMotes(t, dt);
+  $('lvl').textContent = level.toFixed(1);
+  $('fill').style.width = (level / MAX_LEVEL * 100) + '%';
+  $('peak').textContent = peak.toFixed(1);
+  $('best').textContent = best.toFixed(1);
+  $('lines').textContent = lines;
+  bestFlash = Math.max(0, bestFlash - dt);
+  $('newbest').textContent = bestFlash ? 'New best!' : '';
+}
+
+function frame(t) {
+  const dt = Math.min(t - last, 100);
+  last = t;
+  if (!paused) {
+    dropAcc += dt;
+    while (dropAcc >= interval()) { dropAcc -= interval(); if (!move(0, 1)) { dropAcc = 0; break; } }
+    if (hit(cur.m, cur.x, cur.y + 1)) { groundT += dt; if (groundT > 500) lock(); }
+    else groundT = 0;
+  }
+  draw(t, dt);
+  requestAnimationFrame(frame);
+}
+
+setVolume(volume);
+buildMandala();
+buildFractal();
+fitMotes();
+queue = [nextType(), nextType(), nextType()];
+spawn();
+setMode(MODES[store.get('flowMode')] ? store.get('flowMode') : store.get('flowZen') ? 'zen' : 'classic');
+requestAnimationFrame(t => { last = t; frame(t); });
+</script>
+</body></html>
