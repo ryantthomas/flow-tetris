@@ -197,7 +197,8 @@ function adapt(quality) {
   // Placement quality adds on top: a near-best move speeds you up, a poor one eases off.
   const pressure = clamp((stress - 0.3) / 0.3 + trend * (trend > 0 ? 6 : 14) + 2 * (0.7 - quality), -1, 1);
   const push = Math.sign(pressure) * (Math.exp(6 * Math.abs(pressure)) - 1) / (Math.exp(6) - 1);
-  momentum = clamp(momentum - 2.5 * push, 0, MAX_LEVEL - 1);
+  // Climb gently (at most +0.8 per piece), brake firmly (up to -2.5), so speed-ups never feel like a jolt.
+  momentum = clamp(momentum - (push < 0 ? 0.8 : 2.5) * push, 0, MAX_LEVEL - 1);
   const safety = 1 - (Math.exp(7 * height) - 1) / (Math.exp(7) - 1);
   level = 1 + momentum * safety;
   peak = Math.max(peak, level);
