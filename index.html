@@ -43,6 +43,7 @@ body.zen #newbest{color:#f4a641}
 <div class="side">
   <h3>Flow level</h3><div class="big" id="lvl">1.0</div>
   <div id="bar"><div id="fill"></div></div>
+  <h3>Flow score</h3><div id="score">0.0</div>
   <h3>Session peak</h3><div id="peak">1.0</div>
   <h3>Best ever</h3><div id="best">1.0</div><div id="newbest"></div>
   <h3>Hold</h3><canvas id="hold" width="120" height="80"></canvas>
@@ -76,7 +77,8 @@ let bag = [], queue = [], cur, hold = null, canHold = true;
 let lines = 0, paused = false, zen = false, mode = 'classic', modeFlash = 0, shownLevel = 1, landings = 0;
 let dropAcc = 0, groundT = 0, resets = 0, last = 0;
 let momentum = 0, level = 1, trend = 0, lastStress = 0;
-let peak = 1, best = parseFloat(store.get('flowBest')) || 1, bestFlash = 0;
+let score = 0, gain = 1, lastPush = 0;
+let peak = 0, best = parseFloat(store.get('flowScoreBest')) || 0, bestFlash = 0;
 
 // Level 1 = 1 row/sec, level 20 = 20 rows/sec, level 30 ≈ 100 rows/sec.
 const interval = () => 1000 * Math.pow(20, -(level - 1) / 19);
@@ -102,7 +104,7 @@ function hit(m, x, y) {
 function spawn(t) {
   if (!t) { t = queue.shift(); queue.push(nextType()); }
   cur = {t, m: SHAPES[t], x: t === 'O' ? 4 : 3, y: t === 'I' ? -1 : 0};
-  groundT = 0; resets = 0;
+  groundT = 0; resets = 0; cur.born = performance.now();
   if (hit(cur.m, cur.x, cur.y)) topOut();
 }
 
@@ -151,17 +153,23 @@ function placementQuality() {
   return hi > lo ? (mine - lo) / (hi - lo) : 1;
 }
 
+// Optional play log: if log-server.py is running, each landing is recorded for tuning. Silent otherwise.
+function logPiece(rec) {
+  fetch('http://localhost:8765', {method: 'POST', mode: 'no-cors', body: JSON.stringify(rec)}).catch(() => {});
+}
+
 function lock() {
-  const quality = placementQuality();
+  const quality = placementQuality(), think = performance.now() - cur.born;
   cur.m.forEach((row, r) => row.forEach((v, c) => { if (v && cur.y + r >= 0) grid[cur.y + r][cur.x + c] = {t: cur.t, born: performance.now(), stage: landings}; }));
   landings++;
-  if (cur.m.some((row, r) => row.some(v => v && cur.y + r < 0))) return topOut();
+  if (cur.m.some((row, r) => row.some(v => v && cur.y + r < 0))) { logPiece({t: Date.now(), topOut: true, level}); return topOut(); }
   const kept = grid.filter(row => row.some(v => !v));
   const n = H - kept.length;
   grid = [...Array.from({length: n}, () => Array(W).fill(null)), ...kept];
   lines += n;
   if (zen && audio) n ? clearBowls(n) : landBowl();
-  adapt(quality);
+  const ad = adapt(quality);
+  logPiece({t: Date.now(), mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), cleared: n, lines, ...ad});
   canHold = true;
   spawn();
 }
@@ -189,6 +197,11 @@ function measure() {
 // 3. momentum is your built-up speed; the level you actually play at is momentum
 //    scaled by a safety factor that falls exponentially to 0 as the stack reaches
 //    the top, so at the very top you're always back at starting speed.
+// 4. Like a psychophysics staircase, the step size shrinks each time the speed changes
+//    direction, so it settles at your edge instead of swinging around it, and slowly
+//    regrows while you hold steady. Up/down steps of 0.6/2.5 settle at ~80% good moves.
+// Flow score = speed × placement quality, averaged over about the last 20 pieces:
+// it only climbs by making good moves continuously at high speed.
 function adapt(quality) {
   const {height, stress} = measure();
   trend = 0.6 * trend + 0.4 * (stress - lastStress);
@@ -197,18 +210,24 @@ function adapt(quality) {
   // Placement quality adds on top: a near-best move speeds you up, a poor one eases off.
   const pressure = clamp((stress - 0.3) / 0.3 + trend * (trend > 0 ? 6 : 14) + 2 * (0.7 - quality), -1, 1);
   const push = Math.sign(pressure) * (Math.exp(6 * Math.abs(pressure)) - 1) / (Math.exp(6) - 1);
-  // Climb gently (at most +0.8 per piece), brake firmly (up to -2.5), so speed-ups never feel like a jolt.
-  momentum = clamp(momentum - (push < 0 ? 0.8 : 2.5) * push, 0, MAX_LEVEL - 1);
+  if (push * lastPush < 0 && Math.abs(push) > 0.05) gain = Math.max(0.35, gain * 0.8);
+  else gain = Math.min(1, gain + 0.02);
+  if (Math.abs(push) > 0.05) lastPush = push;
+  momentum = clamp(momentum - gain * (push < 0 ? 0.6 : 2.5) * push, 0, MAX_LEVEL - 1);
   const safety = 1 - (Math.exp(7 * height) - 1) / (Math.exp(7) - 1);
   level = 1 + momentum * safety;
-  peak = Math.max(peak, level);
-  if (level > best) { best = level; bestFlash = 3000; store.set('flowBest', best.toFixed(2)); }
+  score += 0.05 * (level * quality - score);
+  peak = Math.max(peak, score);
+  if (score > best) { best = score; bestFlash = 3000; store.set('flowScoreBest', best.toFixed(2)); }
+  const r3 = v => +v.toFixed(3);
+  return {level: r3(level), momentum: r3(momentum), gain: r3(gain), stress: r3(stress), height: r3(height), trend: r3(trend), pressure: r3(pressure), push: r3(push), score: r3(score)};
 }
 
-// Topping out: wipe the board and start over from the base speed. No game over.
+// Topping out: wipe the board, no game over. You keep 60% of your momentum so you're
+// back near your edge quickly instead of rebuilding from scratch.
 function topOut() {
   grid = Array.from({length: H}, () => Array(W).fill(null));
-  momentum = 0; level = 1; trend = 0; lastStress = 0;
+  momentum *= 0.6; level = 1 + momentum; trend = 0; lastStress = 0; gain = 1; lastPush = 0;
   canHold = true;
   spawn();
 }
@@ -557,6 +576,7 @@ function draw(t, dt) {
   drawMotes(t, dt);
   $('lvl').textContent = level.toFixed(1);
   $('fill').style.width = (level / MAX_LEVEL * 100) + '%';
+  $('score').textContent = score.toFixed(1);
   $('peak').textContent = peak.toFixed(1);
   $('best').textContent = best.toFixed(1);
   $('lines').textContent = lines;
