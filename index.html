@@ -77,7 +77,7 @@ let bag = [], queue = [], cur, hold = null, canHold = true;
 let lines = 0, paused = false, zen = false, mode = 'classic', modeFlash = 0, shownLevel = 1, landings = 0;
 let dropAcc = 0, groundT = 0, resets = 0, last = 0;
 let momentum = 0, level = 1, trend = 0, lastStress = 0;
-let score = 0, gain = 1, lastPush = 0;
+let score = 0, gain = 1, lastPush = 0, timeUse = 0.5;
 let peak = 0, best = parseFloat(store.get('flowScoreBest')) || 0, bestFlash = 0;
 
 // Level 1 = 1 row/sec, level 20 = 20 rows/sec, level 30 ≈ 100 rows/sec.
@@ -168,8 +168,8 @@ function lock() {
   grid = [...Array.from({length: n}, () => Array(W).fill(null)), ...kept];
   lines += n;
   if (zen && audio) n ? clearBowls(n) : landBowl();
-  const ad = adapt(quality);
-  logPiece({t: Date.now(), v: 2, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), cleared: n, lines, ...ad});
+  const ad = adapt(quality, think);
+  logPiece({t: Date.now(), v: 3, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), cleared: n, lines, ...ad});
   canHold = true;
   spawn();
 }
@@ -202,7 +202,7 @@ function measure() {
 //    regrows while you hold steady. Up/down steps of 0.6/2.5 settle at ~80% good moves.
 // Flow score = speed × placement quality, averaged over about the last 20 pieces:
 // it only climbs by making good moves continuously at high speed.
-function adapt(quality) {
+function adapt(quality, think) {
   const {height, stress} = measure();
   trend = 0.6 * trend + 0.4 * (stress - lastStress);
   lastStress = stress;
@@ -210,7 +210,10 @@ function adapt(quality) {
   // so new mess brakes you but old buried holes don't hold you at low speed forever.
   // Recovery counts more than worsening, so speed returns quickly once you've cleaned up.
   // Placement quality adds on top: neutral at 0.85 (the 85% rule), better speeds up, worse eases off.
-  const pressure = clamp((height - 0.35) / 0.3 + trend * (trend > 0 ? 6 : 14) + 2 * (0.85 - quality), -1, 1);
+  // Time use = your think time / time the piece takes to fall the whole board (smoothed).
+  // Your data: ~0.12 at level 1 (far too easy), ~0.75 near level 13 (your edge). Above 0.6 eases off.
+  timeUse += 0.25 * (Math.min(2, think / (H * interval())) - timeUse);
+  const pressure = clamp((height - 0.35) / 0.3 + trend * (trend > 0 ? 6 : 14) + 2 * (0.85 - quality) + 1.5 * (timeUse - 0.6), -1, 1);
   const push = Math.sign(pressure) * (Math.exp(6 * Math.abs(pressure)) - 1) / (Math.exp(6) - 1);
   if (push * lastPush < 0 && Math.abs(push) > 0.05) gain = Math.max(0.35, gain * 0.8);
   else gain = Math.min(1, gain + 0.02);
@@ -222,7 +225,7 @@ function adapt(quality) {
   peak = Math.max(peak, score);
   if (score > best) { best = score; bestFlash = 3000; store.set('flowScoreBest', best.toFixed(2)); }
   const r3 = v => +v.toFixed(3);
-  return {level: r3(level), momentum: r3(momentum), gain: r3(gain), stress: r3(stress), height: r3(height), trend: r3(trend), pressure: r3(pressure), push: r3(push), score: r3(score)};
+  return {level: r3(level), momentum: r3(momentum), gain: r3(gain), stress: r3(stress), height: r3(height), trend: r3(trend), pressure: r3(pressure), timeUse: r3(timeUse), push: r3(push), score: r3(score)};
 }
 
 // Topping out: wipe the board, no game over. You keep 60% of your momentum so you're
