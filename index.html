@@ -169,7 +169,7 @@ function lock() {
   lines += n;
   if (zen && audio) n ? clearBowls(n) : landBowl();
   const ad = adapt(quality);
-  logPiece({t: Date.now(), mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), cleared: n, lines, ...ad});
+  logPiece({t: Date.now(), v: 2, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), cleared: n, lines, ...ad});
   canHold = true;
   spawn();
 }
@@ -206,9 +206,11 @@ function adapt(quality) {
   const {height, stress} = measure();
   trend = 0.6 * trend + 0.4 * (stress - lastStress);
   lastStress = stress;
+  // Static pressure comes from height alone; holes and block count act through the trend,
+  // so new mess brakes you but old buried holes don't hold you at low speed forever.
   // Recovery counts more than worsening, so speed returns quickly once you've cleaned up.
-  // Placement quality adds on top: a near-best move speeds you up, a poor one eases off.
-  const pressure = clamp((stress - 0.3) / 0.3 + trend * (trend > 0 ? 6 : 14) + 2 * (0.7 - quality), -1, 1);
+  // Placement quality adds on top: neutral at 0.85 (the 85% rule), better speeds up, worse eases off.
+  const pressure = clamp((height - 0.35) / 0.3 + trend * (trend > 0 ? 6 : 14) + 2 * (0.85 - quality), -1, 1);
   const push = Math.sign(pressure) * (Math.exp(6 * Math.abs(pressure)) - 1) / (Math.exp(6) - 1);
   if (push * lastPush < 0 && Math.abs(push) > 0.05) gain = Math.max(0.35, gain * 0.8);
   else gain = Math.min(1, gain + 0.02);
