@@ -77,7 +77,7 @@ let bag = [], queue = [], cur, hold = null, canHold = true;
 let lines = 0, paused = false, zen = false, mode = 'classic', modeFlash = 0, shownLevel = 1, landings = 0;
 let dropAcc = 0, groundT = 0, resets = 0, last = 0;
 let momentum = 0, level = 1, trend = 0, lastStress = 0;
-let score = 0, gain = 1, lastPush = 0, timeUse = 0.5;
+let score = 0, gain = 1, lastPush = 0, timeUse = 0.5, topMomentum = 0;
 let peak = 0, best = parseFloat(store.get('flowScoreBest')) || 0, bestFlash = 0;
 
 // Level 1 = 1 row/sec, level 20 = 20 rows/sec, level 30 ≈ 100 rows/sec.
@@ -169,7 +169,7 @@ function lock() {
   lines += n;
   if (zen && audio) n ? clearBowls(n) : landBowl();
   const ad = adapt(quality, think);
-  logPiece({t: Date.now(), v: 3, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), cleared: n, lines, ...ad});
+  logPiece({t: Date.now(), v: 4, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), cleared: n, lines, ...ad});
   canHold = true;
   spawn();
 }
@@ -213,12 +213,15 @@ function adapt(quality, think) {
   // Time use = your think time / time the piece takes to fall the whole board (smoothed).
   // Your data: ~0.12 at level 1 (far too easy), ~0.75 near level 13 (your edge). Above 0.6 eases off.
   timeUse += 0.25 * (Math.min(2, think / (H * interval())) - timeUse);
-  const pressure = clamp((height - 0.35) / 0.3 + trend * (trend > 0 ? 6 : 14) + 2 * (0.85 - quality) + 1.5 * (timeUse - 0.6), -1, 1);
+  const pressure = clamp((height - 0.45) / 0.35 + trend * (trend > 0 ? 6 : 14) + 2 * (0.85 - quality) + 1.5 * (timeUse - 0.6), -1, 1);
   const push = Math.sign(pressure) * (Math.exp(6 * Math.abs(pressure)) - 1) / (Math.exp(6) - 1);
   if (push * lastPush < 0 && Math.abs(push) > 0.05) gain = Math.max(0.35, gain * 0.8);
   else gain = Math.min(1, gain + 0.02);
   if (Math.abs(push) > 0.05) lastPush = push;
-  momentum = clamp(momentum - gain * (push < 0 ? 0.6 : 2.5) * push, 0, MAX_LEVEL - 1);
+  // Floor at 40% of this session's best momentum: your data shows dropping to level 1 doesn't help you dig out,
+  // it only costs time near your edge. The safety factor below still brings you to starting speed at the very top.
+  topMomentum = Math.max(topMomentum, momentum);
+  momentum = clamp(momentum - gain * (push < 0 ? 0.6 : 2.5) * push, 0.4 * topMomentum, MAX_LEVEL - 1);
   const safety = 1 - (Math.exp(7 * height) - 1) / (Math.exp(7) - 1);
   level = 1 + momentum * safety;
   score += 0.05 * (level * quality - score);
