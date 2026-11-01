@@ -53,7 +53,7 @@ body.zen #newbest{color:#f4a641}
 <div class="side">
   <h3>Next</h3><canvas id="next" width="120" height="240"></canvas>
   <h3>Lines</h3><div id="lines">0</div>
-  <small>← → move<br>↓ soft drop<br>Space hard drop<br>↑ / X rotate<br>Z rotate back<br>C hold · P pause<br>M or 1–5 change mode<br>N mute · − / = volume</small>
+  <small>← → move<br>↓ soft drop<br>Space hard drop<br>↑ / X rotate<br>Z rotate back<br>C hold · P pause<br>M or 1–5 change mode<br>N mute · − / = volume<br><span id="ver"></span></small>
 </div>
 <script>
 const W = 10, H = 20, S = 30, MAX_LEVEL = 30;
@@ -166,6 +166,7 @@ function placementQuality() {
 }
 
 // Optional play log: if log-server.py is running, each landing is recorded for tuning. Silent otherwise.
+const VERSION = 6;
 function logPiece(rec) {
   fetch('http://localhost:8765', {method: 'POST', mode: 'no-cors', body: JSON.stringify(rec)}).catch(() => {});
 }
@@ -181,7 +182,7 @@ function lock() {
   lines += n;
   if (zen && audio) n ? clearBowls(n) : landBowl();
   const ad = adapt(quality, think);
-  logPiece({t: Date.now(), v: 6, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), cleared: n, lines, ...ad});
+  logPiece({t: Date.now(), v: VERSION, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), cleared: n, lines, ...ad});
   canHold = true;
   spawn();
 }
@@ -623,6 +624,7 @@ buildMandala();
 buildFractal();
 fitMotes();
 queue = [nextType(), nextType(), nextType()];
+$('ver').textContent = 'version ' + VERSION;
 spawn();
 setMode(MODES[store.get('flowMode')] ? store.get('flowMode') : store.get('flowZen') ? 'zen' : 'classic');
 requestAnimationFrame(t => { last = t; frame(t); });
