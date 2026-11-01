@@ -89,14 +89,6 @@ function nextType() {
     bag = Object.keys(SHAPES);
     for (let i = bag.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [bag[i], bag[j]] = [bag[j], bag[i]]; }
   }
-  // Gentle help when the stack is high (block choice as difficulty, per the CHI 2017 Tetris study):
-  // still one of each piece per bag, but sometimes the piece that fits the board best comes first.
-  // Your data: slowing down doesn't help you dig out, but a low stack is where your top speeds happen.
-  const h = grid ? measure().height : 0;
-  if (h > 0.5 && Math.random() < Math.min(0.7, (h - 0.5) * 3)) {
-    const fit = bag.map(t => Math.max(...allScores(SHAPES[t])));
-    return bag.splice(fit.indexOf(Math.max(...fit)), 1)[0];
-  }
   return bag.pop();
 }
 
@@ -166,7 +158,7 @@ function placementQuality() {
 }
 
 // Optional play log: if log-server.py is running, each landing is recorded for tuning. Silent otherwise.
-const VERSION = 6;
+const VERSION = 7;
 function logPiece(rec) {
   fetch('http://localhost:8765', {method: 'POST', mode: 'no-cors', body: JSON.stringify(rec)}).catch(() => {});
 }
