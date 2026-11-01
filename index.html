@@ -89,6 +89,14 @@ function nextType() {
     bag = Object.keys(SHAPES);
     for (let i = bag.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [bag[i], bag[j]] = [bag[j], bag[i]]; }
   }
+  // Gentle help when the stack is high (block choice as difficulty, per the CHI 2017 Tetris study):
+  // still one of each piece per bag, but sometimes the piece that fits the board best comes first.
+  // Your data: slowing down doesn't help you dig out, but a low stack is where your top speeds happen.
+  const h = grid ? measure().height : 0;
+  if (h > 0.5 && Math.random() < Math.min(0.7, (h - 0.5) * 3)) {
+    const fit = bag.map(t => Math.max(...allScores(SHAPES[t])));
+    return bag.splice(fit.indexOf(Math.max(...fit)), 1)[0];
+  }
   return bag.pop();
 }
 
@@ -140,15 +148,19 @@ function placementScore(m, px, py) {
   return -0.51 * total + 0.76 * cleared - 0.36 * holes - 0.18 * bump;
 }
 
-function placementQuality() {
-  const mine = placementScore(cur.m, cur.x, cur.y), scores = [];
-  let m = SHAPES[cur.t];
+function allScores(m) {
+  const scores = [];
   for (let r = 0; r < 4; r++, m = rot(m)) for (let x = -2; x < W; x++) {
     if (hit(m, x, -2)) continue;
     let y = -2;
     while (!hit(m, x, y + 1)) y++;
     scores.push(placementScore(m, x, y));
   }
+  return scores;
+}
+
+function placementQuality() {
+  const mine = placementScore(cur.m, cur.x, cur.y), scores = allScores(SHAPES[cur.t]);
   const lo = Math.min(mine, ...scores), hi = Math.max(mine, ...scores);
   return hi > lo ? (mine - lo) / (hi - lo) : 1;
 }
@@ -169,7 +181,7 @@ function lock() {
   lines += n;
   if (zen && audio) n ? clearBowls(n) : landBowl();
   const ad = adapt(quality, think);
-  logPiece({t: Date.now(), v: 4, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), cleared: n, lines, ...ad});
+  logPiece({t: Date.now(), v: 5, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), cleared: n, lines, ...ad});
   canHold = true;
   spawn();
 }
