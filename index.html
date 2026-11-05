@@ -174,7 +174,7 @@ function lock() {
   lines += n;
   if (zen && audio) n ? clearBowls(n) : landBowl();
   const ad = adapt(quality, think);
-  logPiece({t: Date.now(), v: VERSION, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), cleared: n, lines, ...ad});
+  logPiece({t: Date.now(), v: VERSION, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), first: cur.first, keys: cur.keys || 0, reversals: cur.reversals || 0, hard: !!cur.hard, cleared: n, lines, ...ad});
   canHold = true;
   spawn();
 }
@@ -501,12 +501,20 @@ document.addEventListener('keydown', e => {
   if (k === '=' || k === '+') return setVolume(volume + 0.1, false);
   if (k === 'p') { paused = !paused; if (audio) paused ? audio.suspend() : audio.resume(); return; }
   if (paused) return;
+  // Input stats for the play log: time to first key, key count, left/right reversals (hesitation).
+  if (['arrowleft','arrowright','arrowdown','arrowup','x','z',' ','c','shift'].includes(k)) {
+    cur.first ??= Math.round(performance.now() - cur.born);
+    cur.keys = (cur.keys || 0) + 1;
+    const dir = k === 'arrowleft' ? -1 : k === 'arrowright' ? 1 : 0;
+    if (dir && cur.dir && dir !== cur.dir) cur.reversals = (cur.reversals || 0) + 1;
+    if (dir) cur.dir = dir;
+  }
   if (k === 'arrowleft') move(-1, 0);
   else if (k === 'arrowright') move(1, 0);
   else if (k === 'arrowdown') move(0, 1);
   else if (k === 'arrowup' || k === 'x') rotate(1);
   else if (k === 'z') rotate(-1);
-  else if (k === ' ') { while (move(0, 1)); lock(); }
+  else if (k === ' ') { while (move(0, 1)); cur.hard = true; lock(); }
   else if (k === 'c' || k === 'shift') holdPiece();
 });
 $('vol').addEventListener('input', e => setVolume(+e.target.value, false));
