@@ -181,7 +181,7 @@ function lock() {
   lines += n;
   if (zen && audio) n ? clearBowls(n) : landBowl();
   const ad = adapt(quality, think, n);
-  logPiece({t: Date.now(), v: VERSION, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), first: cur.first, keys: cur.keys || 0, reversals: cur.reversals || 0, hard: !!cur.hard, cleared: n, lines, ...ad});
+  logPiece({t: Date.now(), v: VERSION, mode, piece: cur.t, think: Math.round(think), quality: +quality.toFixed(3), first: cur.first, keys: cur.keys || 0, reversals: cur.reversals || 0, hard: !!cur.hard, cleared: n, lines, next: queue.join(""), hold, sound: zen && !muted ? +volume.toFixed(2) : 0, board: grid.map(row => row.map(v => v ? 1 : 0).join('')).join(''), ...ad});
   canHold = true;
   spawn();
 }
