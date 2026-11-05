@@ -14,8 +14,8 @@ An endless, adaptive falling-blocks game built for staying in the flow state. It
            + 2.5 · (timeUse − 0.7)           think time ÷ time for the piece to fall the board
   ```
   Pressure is bent exponentially (barely moves near balance, pushes hard at the extremes), then nudges your momentum: climbs gently (+0.6 max per piece), brakes firmly (−2.5). Like a psychophysics staircase, the step shrinks each time speed changes direction, so it settles at your edge. Speed never drops below 40% of your session best, except near the very top of the board, where a safety factor brings it back to the starting speed.
-- **Placement quality.** Like a chess engine, the game scores every spot each piece could have gone (height, lines, holes, bumpiness) and rates your move from 0 (worst) to 1 (best).
-- **Flow score** = speed × placement quality, averaged over about the last 20 pieces. It only climbs by making good moves continuously at high speed. Session peak and best ever are tracked.
+- **Placement quality.** Like a chess engine, the game scores every spot each piece could have gone (height, lines, holes, bumpiness) and rates your move from 0 (worst) to 1 (best). Multi-line clears are valued far above singles, and one open well column is not penalized, so building toward a 4-line clear counts as a good move.
+- **Flow score** = speed × placement quality, averaged over about the last 20 pieces. It only climbs by making good moves continuously at high speed, and multi-line clears add +20% per extra line. Session peak and best ever are tracked.
 - **Tuned on real play.** The constants were tuned over about 5,800 logged pieces of play. To log your own, run `python3 log-server.py` while playing; each piece is appended to `play-log.jsonl`. Without the server, nothing is recorded.
 
 ## Modes (M or 1–5)
