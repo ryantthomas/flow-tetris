@@ -46,6 +46,8 @@ body.zen #newbest{color:#f4a641}
   <h3>Flow score</h3><div id="score">0.0</div>
   <h3>Session peak</h3><div id="peak">1.0</div>
   <h3>Best ever</h3><div id="best">1.0</div><div id="newbest"></div>
+  <h3>Speed held</h3><div id="held">30s – · 60s –</div>
+  <h3>Best held</h3><div id="heldBest"></div>
   <h3>Hold</h3><canvas id="hold" width="120" height="80"></canvas>
   <h3>Sound</h3><div class="sound"><button id="mute" title="Mute (N)">🔊</button><input id="vol" type="range" min="0" max="1" step="0.05" title="Volume (− / =)"></div>
 </div>
@@ -79,6 +81,10 @@ let dropAcc = 0, groundT = 0, resets = 0, last = 0;
 let momentum = 0, level = 1, trend = 0, lastStress = 0;
 let score = 0, gain = 1, lastPush = 0, timeUse = 0.5, topMomentum = 0;
 let peak = 0, best = parseFloat(store.get('flowScoreBest')) || 0, bestFlash = 0;
+// Speed held: the slowest you've been over the last 30s / 60s of play, i.e. the speed you've sustained.
+// Records are kept per window; beating one is rewarded with a chime and a message.
+let playT = 0, history = [], heldNow = {30: 0, 60: 0}, holdFlash = 0;
+const heldBest = {30: parseFloat(store.get('held30Best')) || 0, 60: parseFloat(store.get('held60Best')) || 0};
 
 // Level 1 = 1 row/sec, level 20 = 20 rows/sec, level 30 ≈ 100 rows/sec.
 const interval = () => 1000 * Math.pow(20, -(level - 1) / 19);
@@ -165,7 +171,7 @@ function placementQuality() {
 }
 
 // Optional play log: if log-server.py is running, each landing is recorded for tuning. Silent otherwise.
-const VERSION = 9;
+const VERSION = 10;
 function logPiece(rec) {
   fetch('http://localhost:8765', {method: 'POST', mode: 'no-cors', body: JSON.stringify(rec)}).catch(() => {});
 }
@@ -242,7 +248,7 @@ function adapt(quality, think, cleared) {
   peak = Math.max(peak, score);
   if (score > best) { best = score; bestFlash = 3000; store.set('flowScoreBest', best.toFixed(2)); }
   const r3 = v => +v.toFixed(3);
-  return {level: r3(level), momentum: r3(momentum), gain: r3(gain), stress: r3(stress), height: r3(height), trend: r3(trend), pressure: r3(pressure), timeUse: r3(timeUse), push: r3(push), score: r3(score)};
+  return {level: r3(level), momentum: r3(momentum), gain: r3(gain), stress: r3(stress), height: r3(height), trend: r3(trend), pressure: r3(pressure), held30: r3(heldNow[30]), held60: r3(heldNow[60]), timeUse: r3(timeUse), push: r3(push), score: r3(score)};
 }
 
 // Topping out: wipe the board, no game over. You keep 60% of your momentum so you're
@@ -611,13 +617,35 @@ function draw(t, dt) {
   $('best').textContent = best.toFixed(1);
   $('lines').textContent = lines;
   bestFlash = Math.max(0, bestFlash - dt);
-  $('newbest').textContent = bestFlash ? 'New best!' : '';
+  holdFlash = Math.max(0, holdFlash - dt);
+  $('newbest').textContent = holdFlash ? `New ${$('newbest').dataset.w}s hold record!` : bestFlash ? 'New best!' : '';
+  const fmt = v => v ? v.toFixed(1) : '–';
+  $('held').textContent = `30s ${fmt(heldNow[30])} · 60s ${fmt(heldNow[60])}`;
+  $('heldBest').textContent = `30s ${fmt(heldBest[30])} · 60s ${fmt(heldBest[60])}`;
+}
+
+function trackHeld(dt) {
+  playT += dt;
+  if (!history.length || playT - history[history.length - 1].t >= 250) history.push({t: playT, level});
+  while (playT - history[0].t > 61000) history.shift();
+  for (const w of [30, 60]) {
+    const ms = w * 1000;
+    if (playT - history[0].t < ms - 250) { heldNow[w] = 0; continue; }
+    heldNow[w] = Math.min(...history.filter(h => playT - h.t <= ms).map(h => h.level));
+    if (heldNow[w] > heldBest[w] + 0.05) {
+      if (!holdFlash && zen && audio) clearBowls(w === 60 ? 3 : 2);
+      heldBest[w] = heldNow[w]; store.set(`held${w}Best`, heldNow[w].toFixed(2));
+      holdFlash = 3000;
+      $('newbest').dataset.w = w;
+    }
+  }
 }
 
 function frame(t) {
   const dt = Math.min(t - last, 100);
   last = t;
   if (!paused) {
+    trackHeld(dt);
     dropAcc += dt;
     while (dropAcc >= interval()) { dropAcc -= interval(); if (!move(0, 1)) { dropAcc = 0; break; } }
     if (hit(cur.m, cur.x, cur.y + 1)) { groundT += dt; if (groundT > 500) lock(); }
