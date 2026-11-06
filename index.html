@@ -239,7 +239,7 @@ function adapt(quality, think, cleared) {
   if (Math.abs(push) > 0.05) lastPush = push;
   // Floor at 60% of this session's best momentum. Your data: dropping speed doesn't help you dig out, and you make
   // more holes when slow (22% of moves below level 10 vs 9% at 15-17), so staying fast keeps you engaged.
-  // it only costs time near your edge. The safety factor below still brings you to starting speed at the very top.
+  // The safety factor below still brings you to starting speed at the very top.
   topMomentum = Math.max(topMomentum, momentum);
   momentum = clamp(momentum - gain * (push < 0 ? 0.6 : 2.5) * push, 0.6 * topMomentum, MAX_LEVEL - 1);
   const safety = 1 - (Math.exp(7 * height) - 1) / (Math.exp(7) - 1);
