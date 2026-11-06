@@ -171,7 +171,7 @@ function placementQuality() {
 }
 
 // Optional play log: if log-server.py is running, each landing is recorded for tuning. Silent otherwise.
-const VERSION = 10;
+const VERSION = 11;
 function logPiece(rec) {
   fetch('http://localhost:8765', {method: 'POST', mode: 'no-cors', body: JSON.stringify(rec)}).catch(() => {});
 }
@@ -237,10 +237,11 @@ function adapt(quality, think, cleared) {
   if (push * lastPush < 0 && Math.abs(push) > 0.05) gain = Math.max(0.35, gain * 0.8);
   else gain = Math.min(1, gain + 0.02);
   if (Math.abs(push) > 0.05) lastPush = push;
-  // Floor at 40% of this session's best momentum: your data shows dropping to level 1 doesn't help you dig out,
+  // Floor at 60% of this session's best momentum. Your data: dropping speed doesn't help you dig out, and you make
+  // more holes when slow (22% of moves below level 10 vs 9% at 15-17), so staying fast keeps you engaged.
   // it only costs time near your edge. The safety factor below still brings you to starting speed at the very top.
   topMomentum = Math.max(topMomentum, momentum);
-  momentum = clamp(momentum - gain * (push < 0 ? 0.6 : 2.5) * push, 0.4 * topMomentum, MAX_LEVEL - 1);
+  momentum = clamp(momentum - gain * (push < 0 ? 0.6 : 2.5) * push, 0.6 * topMomentum, MAX_LEVEL - 1);
   const safety = 1 - (Math.exp(7 * height) - 1) / (Math.exp(7) - 1);
   level = 1 + momentum * safety;
   // Multi-line clears add a bonus on top: +20% per extra line on that piece.
